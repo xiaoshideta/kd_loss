@@ -197,7 +197,7 @@ with Engine(custom_parser=parser) as engine:
         BatchNorm2d2 = nn.BatchNorm2d
 
     # CMX分支
-    model = segmodel(cfg=config, criterion=criterion, norm_layer=BatchNorm2d, load=True, decode_init=0)
+    model = segmodel(cfg=config, criterion=criterion, norm_layer=BatchNorm2d, load=True, decode_init=0, losses=args.losses)
     # print(model)
     # print("model", model.backbone.patch_embed1.proj.weight)
     # print("model", model.backbone.extra_patch_embed1.proj.weight)
@@ -343,12 +343,23 @@ with Engine(custom_parser=parser) as engine:
                 'loss3': [],   # 存储第三组损失值
                 'loss4': []   # 存储第四组损失值
             }
-            loss_values['loss1'].append(distill_feature_maps(rgbd_x[0], rgb_x[0].detach()))
-            loss_values['loss2'].append(distill_feature_maps(rgbd_x[1], rgb_x[1].detach()))
-            loss_values['loss3'].append(distill_feature_maps(rgbd_x[2], rgb_x[2].detach()))
-            loss_values['loss4'].append(distill_feature_maps(rgbd_x[3], rgb_x[3].detach()))
+            # 只计算在 args.losses 中指定的损失函数
+            num_values = 0
+            for loss_name in args.losses:
+                
+                loss_values[loss_name].append(distill_feature_maps(rgbd_x[num_values], rgb_x[int(loss_name[-1])-1].detach()))
+                num_values = num_values + 1
+            # loss_values['loss1'].append(distill_feature_maps(rgbd_x[0], rgb_x[0].detach()))
+            # loss_values['loss2'].append(distill_feature_maps(rgbd_x[1], rgb_x[1].detach()))
+            # loss_values['loss3'].append(distill_feature_maps(rgbd_x[2], rgb_x[2].detach()))
+            # loss_values['loss4'].append(distill_feature_maps(rgbd_x[3], rgb_x[3].detach()))
+            # print("loss1", loss_values['loss1'])
+            # print("loss2", loss_values['loss2'])
+            # print("loss3", loss_values['loss3'])
+            # print("loss4", loss_values['loss4'])
             selected_losses = args.losses
             selected_loss_values = [loss_values[loss_name][-1] for loss_name in selected_losses]
+            # print("selected_loss", sum(selected_loss_values))
             feature_loss = (sum(selected_loss_values)) * args.distillation_beta
             loss = loss + feature_loss
             # print("selected_loss", middle_loss)
