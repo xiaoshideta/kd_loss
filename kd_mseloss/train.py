@@ -278,7 +278,7 @@ with Engine(custom_parser=parser) as engine:
     if args.distillation_single == 1:
         print("use loss_rdkl")
     print("distillation_alpha:", args.distillation_alpha)
-    print("distillation_beta:", args.distillation_alpha)
+    print("distillation_beta:", args.distillation_beta)
 
     for epoch in range(engine.state.epoch, config.nepochs + 1):
         model.train()
