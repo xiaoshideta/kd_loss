@@ -11,7 +11,7 @@ from engine.logger import get_logger
 logger = get_logger()
 
 class EncoderDecoder(nn.Module):
-    def __init__(self, cfg=None, criterion=nn.CrossEntropyLoss(reduction='mean', ignore_index=255), norm_layer=nn.BatchNorm2d, load=True, decode_init=1):
+    def __init__(self, cfg=None, criterion=nn.CrossEntropyLoss(reduction='mean', ignore_index=255), norm_layer=nn.BatchNorm2d, load=True, decode_init=1, losses="loss1"):
         super(EncoderDecoder, self).__init__()
         self.channels = [64, 128, 320, 512]
         self.norm_layer = norm_layer
@@ -57,7 +57,7 @@ class EncoderDecoder(nn.Module):
         if cfg.decoder == 'MLPDecoder':
             logger.info('Using MLP Decoder')
             from .decoders.MLPDecoder import DecoderHead2
-            self.decode_head = DecoderHead2(in_channels=self.channels, num_classes=cfg.num_classes, norm_layer=norm_layer, embed_dim=cfg.decoder_embed_dim)
+            self.decode_head = DecoderHead2(in_channels=self.channels, num_classes=cfg.num_classes, norm_layer=norm_layer, embed_dim=cfg.decoder_embed_dim, losses=losses)
         
         elif cfg.decoder == 'UPernet':
             logger.info('Using Upernet Decoder')
