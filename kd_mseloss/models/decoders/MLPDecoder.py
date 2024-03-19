@@ -119,13 +119,14 @@ class DecoderHead2(nn.Module):
                  dropout_ratio=0.1,
                  norm_layer=nn.BatchNorm2d,
                  embed_dim=768,
-                 align_corners=False):
+                 align_corners=False,
+                 losses=''):
         
         super(DecoderHead2, self).__init__()
         self.num_classes = num_classes
         self.dropout_ratio = dropout_ratio
         self.align_corners = align_corners
-        
+        self.losses = losses
         self.in_channels = in_channels
         
         if dropout_ratio > 0:
@@ -140,10 +141,13 @@ class DecoderHead2(nn.Module):
         self.linear_c3 = MLP(input_dim=c3_in_channels, embed_dim=embedding_dim)
         self.linear_c2 = MLP(input_dim=c2_in_channels, embed_dim=embedding_dim)
         self.linear_c1 = MLP(input_dim=c1_in_channels, embed_dim=embedding_dim)
-        self.conv_c4 = nn.Conv2d(c4_in_channels, c4_in_channels, kernel_size=1)
-        self.conv_c3 = nn.Conv2d(c3_in_channels, c3_in_channels, kernel_size=1)
-        self.conv_c2 = nn.Conv2d(c2_in_channels, c2_in_channels, kernel_size=1)
-        self.conv_c1 = nn.Conv2d(c1_in_channels, c1_in_channels, kernel_size=1)
+         # 根据 losses 的内容动态创建 conv 层
+        for loss_name in self.losses:
+            setattr(self, f"conv_{loss_name}", nn.Conv2d(eval(f"c{loss_name[-1]}_in_channels"), eval(f"c{loss_name[-1]}_in_channels"), kernel_size=1))
+        # self.conv_c4 = nn.Conv2d(c4_in_channels, c4_in_channels, kernel_size=1)
+        # self.conv_c3 = nn.Conv2d(c3_in_channels, c3_in_channels, kernel_size=1)
+        # self.conv_c2 = nn.Conv2d(c2_in_channels, c2_in_channels, kernel_size=1)
+        # self.conv_c1 = nn.Conv2d(c1_in_channels, c1_in_channels, kernel_size=1)
         
         self.linear_fuse = nn.Sequential(
                             nn.Conv2d(in_channels=embedding_dim*4, out_channels=embedding_dim, kernel_size=1),
@@ -175,18 +179,12 @@ class DecoderHead2(nn.Module):
         x = self.dropout(_c)
         x = self.linear_pred(x)
 
-        b4 = self.conv_c4(c4)
-
-        b3 = self.conv_c3(c3)
-
-        b2 = self.conv_c2(c2)
-
-        b1 = self.conv_c1(c1)
-
-        outs.append(b1)
-        outs.append(b2)
-        outs.append(b3)
-        outs.append(b4)
+        # 根据 losses 的内容动态使用 conv 层
+        for loss_name in self.losses:
+            conv_layer = getattr(self, f"conv_{loss_name}")
+            b = conv_layer(eval(f"c{loss_name[-1]}"))
+            # print(b.shape)
+            outs.append(b)
 
         return x, outs
 
