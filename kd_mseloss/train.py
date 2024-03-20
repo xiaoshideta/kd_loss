@@ -181,7 +181,7 @@ with Engine(custom_parser=parser) as engine:
         engine.link_tb(tb_dir, generate_tb_dir)
         path3 = tb_dir + '/exp.log'
         sys.stdout = Record(path3, sys.stdout)
-    # print(args)
+    print(args)
 
     # 损失函数
     criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
@@ -277,6 +277,7 @@ with Engine(custom_parser=parser) as engine:
         print("use (teacher.detach,student)")
     if args.distillation_single == 1:
         print("use loss_rdkl")
+    print("use_loss:", args.losses)
     print("distillation_alpha:", args.distillation_alpha)
     print("distillation_beta:", args.distillation_beta)
 
