@@ -50,10 +50,10 @@ C.norm_std = np.array([0.229, 0.224, 0.225])
 
 """ Settings for network, this would be different for each kind of model"""
 C.backbone = 'mit_b4' # Remember change the path below.
-C.pretrained_model = C.root_dir + '/pretrained/pre/mitb4-rgb-52.31.pth'
+C.pretrained_model = C.root_dir + '/pretrained/segformer/mit_b4.pth'
 # C.pretrained_model = C.root_dir + '/pretrained/segformer/mit_b2.pth'
 # C.pretrained_model = C.root_dir + '/pretrained/pre/epoch-231-depth-38.52.pth'
-C.pretrained_model1 = C.root_dir + '/pretrained/pre/mitb4-depth-41.55.pth'
+C.pretrained_model1 = C.root_dir + '/pretrained/pre/mitb4-rgb-52.31.pth'
 
 C.decoder = 'MLPDecoder'
 C.decoder_embed_dim = 512
