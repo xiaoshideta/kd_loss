@@ -150,7 +150,7 @@ class Engine(object):
 
         t_iobegin = time.time()
         torch.save(state_dict, path)
-        torch.save(state_dict1, path1)
+        # torch.save(state_dict1, path1)
 
         del state_dict
         del state_dict1
