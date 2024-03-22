@@ -11,8 +11,8 @@ import torch.distributed as dist
 import torch.backends.cudnn as cudnn
 from torch.nn.parallel import DistributedDataParallel
 
-# from config import config
 from config import config
+# from config2 import config
 from dataloader.dataloader import get_train_loader, ValPre
 from models.builder import EncoderDecoder as segmodel
 from models.builder import EncoderDecoder2 as segmodel2
@@ -29,11 +29,13 @@ from tensorboardX import SummaryWriter
 from torch.nn import functional as F
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--distillation_alpha', type=float, default=0.1, help='Description of new argument')
+parser.add_argument('--distillation_alpha', type=float, default=1, help='Description of new argument')
+parser.add_argument('--distillation_beta', type=float, default=0.1, help='Description of new argument')
 parser.add_argument('--distillation_single', type=int, default=1, help='Description of new argument')
 parser.add_argument('--distillation_single2', type=int, default=0, help='Description of new argument')
 parser.add_argument('--distillation_flag', type=int, default=0, help='Description of new argument')
 parser.add_argument('--decode_init', type=int, default=0, help='Description of new argument')
+parser.add_argument('--losses', nargs='+', default=['loss1','loss2','loss3','loss4'], help='Names of the losses to be used')
 logger = get_logger()
 
 os.environ['MASTER_PORT'] = '169710'
@@ -64,6 +66,22 @@ class KLDivergenceCalculator():
         # 返回KL散度的平均值
         return kl_div.mean()
 
+def distill_feature_maps(rgbd_features, rgb_features):
+    # 确保两个列表中的张量数量相同
+    # assert len(rgbd_features) == len(rgb_features), "Feature lists must have the same length."
+    # device='cuda:0'
+    
+    # 使用均方误差作为损失函数
+    mse_loss = nn.MSELoss()
+    
+    # 初始化总损失为0
+    total_loss = 0
+    loss = mse_loss(rgbd_features, rgb_features)
+        # loss = mse_loss(rgbd_feature, rgb_feature)
+    total_loss += loss
+    
+    # 返回计算得到的总损失
+    return total_loss
 
 class SegEvaluator(Evaluator):
     def func_per_iteration(self, data, device, flag):
@@ -157,27 +175,13 @@ with Engine(custom_parser=parser) as engine:
 
     # 创建记录的文件夹和log日志
     if (engine.distributed and (engine.local_rank == 0)) or (not engine.distributed):
-        # tb_dir = config.tb_dir + '/{}'.format(time.strftime("%b%d_%d-%H-%M", time.localtime()))
-        # print("config.tb_dir: ", config.log_dir)
-        # exp_time = time.strftime('%Y_%m_%d_%H_%M_%S', time.localtime())
-        # config.log_dir = config.log_dir + '/{}'.format(exp_time)
-        # tb_dir = config.log_dir
-        # config.checkpoint_dir = tb_dir + '/checkpoint/'
-
-        # generate_tb_dir = tb_dir + '/tb'
-        # tb = SummaryWriter(log_dir=tb_dir)
-        # engine.link_tb(tb_dir, generate_tb_dir)
-        # path3 = tb_dir + '/exp.log'
-        # sys.stdout = Record(path3, sys.stdout)
-        # print("config.log_dir: ", config.log_dir)
-
         tb_dir = config.tb_dir + '/{}'.format(time.strftime("%b%d_%d-%H-%M", time.localtime()))
         generate_tb_dir = config.tb_dir + '/tb'
         tb = SummaryWriter(log_dir=tb_dir)
         engine.link_tb(tb_dir, generate_tb_dir)
         path3 = tb_dir + '/exp.log'
         sys.stdout = Record(path3, sys.stdout)
-    # print(args)
+    print(args)
 
     # 损失函数
     criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=config.background)
@@ -187,21 +191,13 @@ with Engine(custom_parser=parser) as engine:
     # 归一化函数
     if engine.distributed:
         BatchNorm2d = nn.SyncBatchNorm
-        BatchNorm2d2 = nn.SyncBatchNorm
+        BatchNorm2d2 = nn.BatchNorm2d
     else:
         BatchNorm2d = nn.BatchNorm2d
         BatchNorm2d2 = nn.BatchNorm2d
 
-    # 训练的model初始化
-    # model=segmodel(cfg=config, criterion=criterion, norm_layer=BatchNorm2d)
-
     # CMX分支
-    
-
-    # rgb分支
-    config.backbone = 'mit_b4'
-    print(config.backbone)
-    model = segmodel(cfg=config, criterion=criterion, norm_layer=BatchNorm2d, load=True, decode_init=args.decode_init)
+    model = segmodel(cfg=config, criterion=criterion, norm_layer=BatchNorm2d, load=True, decode_init=0, losses=args.losses)
     # print(model)
     # print("model", model.backbone.patch_embed1.proj.weight)
     # print("model", model.backbone.extra_patch_embed1.proj.weight)
@@ -211,11 +207,11 @@ with Engine(custom_parser=parser) as engine:
     # depth分支
     config.backbone = 'single_mit_b4'
     print(config.backbone)
-    model2 = segmodel2(cfg=config, criterion=criterion2, norm_layer=BatchNorm2d2, load=True, decode_init=args.decode_init)
+    model2 = segmodel2(cfg=config, criterion=criterion2, norm_layer=BatchNorm2d2, load=True, decode_init=1)
 
-    # print("model2", model2.backbone.patch_embed1.proj.weight)
-    # print("model2", model2.decode_head.linear_c4.proj.weight)
-    # print("model", model2.backbone.extra_patch_embed1.proj.weight)
+    # 将教师模型的参数固定
+    for param in model2.parameters():
+        param.requires_grad = False
 
     # 进行验证测试的model初始化
     # network = segmodel(cfg=config, criterion=True, norm_layer=nn.BatchNorm2d, load=None)
@@ -223,8 +219,6 @@ with Engine(custom_parser=parser) as engine:
     # 学习率参数
     base_lr = config.lr
     base_lr2 = config.lr
-    # if engine.distributed:
-    #     base_lr = config.lr
 
     # 用于将模型的参数按照特定的规则进行分组，然后为每个参数组设置不同的学习率
     params_list = []
@@ -236,19 +230,18 @@ with Engine(custom_parser=parser) as engine:
     # 设置优化器 AdamW
     if config.optimizer == 'AdamW':
         optimizer = torch.optim.AdamW(params_list, lr=base_lr, betas=(0.9, 0.999), weight_decay=config.weight_decay)
-        optimizer2 = torch.optim.AdamW(params_list2, lr=base_lr2, betas=(0.9, 0.999), weight_decay=config.weight_decay)
+        # optimizer2 = torch.optim.AdamW(params_list2, lr=base_lr2, betas=(0.9, 0.999), weight_decay=config.weight_decay)
     elif config.optimizer == 'SGDM':
         optimizer = torch.optim.SGD(params_list, lr=base_lr, momentum=config.momentum, weight_decay=config.weight_decay)
-        optimizer2 = torch.optim.SGD(params_list2, lr=base_lr2, momentum=config.momentum,
-                                     weight_decay=config.weight_decay)
+        # optimizer2 = torch.optim.SGD(params_list2, lr=base_lr2, momentum=config.momentum,
+        #                              weight_decay=config.weight_decay)
     else:
         raise NotImplementedError
 
     # 学习率warm up策略
     total_iteration = config.nepochs * config.niters_per_epoch
     lr_policy = WarmUpPolyLR(base_lr, config.lr_power, total_iteration, config.niters_per_epoch * config.warm_up_epoch)
-    lr_policy2 = WarmUpPolyLR(base_lr2, config.lr_power, total_iteration,
-                              config.niters_per_epoch * config.warm_up_epoch)
+
 
     # 数据分布式训练
     if engine.distributed:
@@ -257,16 +250,15 @@ with Engine(custom_parser=parser) as engine:
             model.cuda()
             model = DistributedDataParallel(model, device_ids=[engine.local_rank],
                                             output_device=engine.local_rank, find_unused_parameters=False)
-            model2.cuda()
-            model2 = DistributedDataParallel(model2, device_ids=[engine.local_rank],
-                                             output_device=engine.local_rank, find_unused_parameters=False)
+            device1 = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            model2.to(device1)
     else:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
         model2.to(device)
 
     # 保存与恢复
-    engine.register_state(dataloader=train_loader, model=model, optimizer=optimizer, model2=model2, optimizer2=optimizer2)
+    engine.register_state(dataloader=train_loader, model=model, optimizer=optimizer, model2=model2, optimizer2=optimizer)
     # engine.register_state(dataloader=train_loader, model=model2,
     #                       optimizer=optimizer2)
     if engine.continue_state_object:
@@ -274,27 +266,25 @@ with Engine(custom_parser=parser) as engine:
 
     # 训练
     optimizer.zero_grad()
-    optimizer2.zero_grad()
+    # optimizer2.zero_grad()
 
     logger.info('begin trainning:')
     Best_IoU = 0.0
     Best_rgb_IoU = 0.0
-    Best_depth_IoU = 0.0
     Best_cmx_IoU = 0.0
-
-    if args.distillation_flag == 0:
+    Best_depth_IoU = 0.0
+    if args.distillation_flag == 1:
         print("use (teacher.detach,student)")
-    if args.decode_init == 1:
-        print("use decode_init")
     if args.distillation_single == 1:
         print("use loss_rdkl")
-    if args.distillation_single2 == 1:
-        print("use loss_drkl")
+    print("use_loss:", args.losses)
     print("distillation_alpha:", args.distillation_alpha)
+    print("distillation_beta:", args.distillation_beta)
 
     for epoch in range(engine.state.epoch, config.nepochs + 1):
         model.train()
-        model2.train()
+        # model2.train()
+        model2.eval()
 
         if engine.distributed:
             train_sampler.set_epoch(epoch)
@@ -322,55 +312,77 @@ with Engine(custom_parser=parser) as engine:
             aux_rate = 0.2
             # 输入模型，获得损失
             # logits, loss = model(imgs, None, gts)
-            logits, loss = model(imgs, modal_xs, gts)
+            logits, rgbd_x, loss = model(imgs, modal_xs, gts)
+            # for tensor in  rgbd_y:
+            #     print("rgbd_feature:", tensor.shape)
+                # [2, 64, 120, 160]
+                # [2, 128, 60, 80]
+                # [2, 320, 30, 40]
+                # [2, 512, 15, 20]
             # print(logist.shape) # [2, 40, 480, 640]
-            logits2, loss2 = model2(modal_xs, None, gts)
-
+            logits2, rgb_x, loss2 = model2(imgs, None, gts)
+            # for tensor in  rgb_x:
+            #     print("rgbd_feature:", tensor.shape)
 
             if args.distillation_flag:
             # distillation_alpha = 0.01
-                loss_rdkl = kl_calculator.compute_kl_divergence(logits, logits2.detach()) * args.distillation_alpha
-                # loss_rdkl = kl_calculator.compute_kl_divergence(logits2.detach(), logits) * args.distillation_alpha
-                loss_drkl = kl_calculator.compute_kl_divergence(logits2, logits.detach()) * args.distillation_alpha
-            else:
                 loss_rdkl = kl_calculator.compute_kl_divergence(logits2.detach(), logits) * args.distillation_alpha
-                # loss_rdkl = kl_calculator.compute_kl_divergence(logits2.detach(), logits) * args.distillation_alpha
-                loss_drkl = kl_calculator.compute_kl_divergence(logits.detach(), logits2.detach()) * args.distillation_alpha
+                
+            else:
+                loss_rdkl = kl_calculator.compute_kl_divergence(logits, logits2.detach()) * args.distillation_alpha
             # print(logist2.shape) # [2, 40, 480, 640]
             # print(gts.shape) # [2, 480, 640]
             if args.distillation_single == 1:
                 loss = loss + loss_rdkl
             else:
                 loss = loss
+            
+            feature_loss = 0.0
+            loss_values = {
+                'loss1': [],  # 存储第一组损失值
+                'loss2': [],  # 存储第二组损失值
+                'loss3': [],   # 存储第三组损失值
+                'loss4': []   # 存储第四组损失值
+            }
+            # 只计算在 args.losses 中指定的损失函数
+            num_values = 0
+            for loss_name in args.losses:
+                
+                loss_values[loss_name].append(distill_feature_maps(rgbd_x[num_values], rgb_x[int(loss_name[-1])-1].detach()))
+                num_values = num_values + 1
+            # loss_values['loss1'].append(distill_feature_maps(rgbd_x[0], rgb_x[0].detach()))
+            # loss_values['loss2'].append(distill_feature_maps(rgbd_x[1], rgb_x[1].detach()))
+            # loss_values['loss3'].append(distill_feature_maps(rgbd_x[2], rgb_x[2].detach()))
+            # loss_values['loss4'].append(distill_feature_maps(rgbd_x[3], rgb_x[3].detach()))
+            # print("loss1", loss_values['loss1'])
+            # print("loss2", loss_values['loss2'])
+            # print("loss3", loss_values['loss3'])
+            # print("loss4", loss_values['loss4'])
+            selected_losses = args.losses
+            selected_loss_values = [loss_values[loss_name][-1] for loss_name in selected_losses]
+            # print("selected_loss", sum(selected_loss_values))
+            feature_loss = (sum(selected_loss_values)) * args.distillation_beta
+            loss = loss + feature_loss
+            # print("selected_loss", middle_loss)
 
-            if args.distillation_single2 == 1:
-                # print("use loss_drkl")
-                loss2 = loss2 + loss_drkl
-            else:
-                loss2 = loss2
-            # loss2 = loss2 + loss_drkl
+            # print("feature_loss", feature_loss)
 
             # reduce the whole loss over multi-gpu
             if engine.distributed:
                 reduce_loss = all_reduce_tensor(loss, world_size=engine.world_size)
                 reduce_loss2 = all_reduce_tensor(loss2, world_size=engine.world_size)
                 reduce_kl_loss = all_reduce_tensor(loss_rdkl, world_size=engine.world_size)
+                reduce_middle_loss = all_reduce_tensor(feature_loss, world_size=engine.world_size)
 
             optimizer.zero_grad()
-            optimizer2.zero_grad()
-            loss.backward(retain_graph=True)
-            loss2.backward()
+            loss.backward()
             optimizer.step()
-            optimizer2.step()
 
             current_idx = (epoch - 1) * config.niters_per_epoch + idx
             lr = lr_policy.get_lr(current_idx)
-            lr2 = lr_policy2.get_lr(current_idx)
 
             for i in range(len(optimizer.param_groups)):
                 optimizer.param_groups[i]['lr'] = lr
-            for i in range(len(optimizer2.param_groups)):
-                optimizer2.param_groups[i]['lr'] = lr2
 
             if engine.distributed:
                 sum_loss += reduce_loss.item()
@@ -381,7 +393,8 @@ with Engine(custom_parser=parser) as engine:
                             + ' lr=%.4e' % lr \
                             + ' loss=%.4f total_loss=%.4f' % (reduce_loss.item(), (sum_loss / (idx + 1))) \
                             + ' loss2=%.4f total_loss2=%.4f' % (reduce_loss2.item(), (sum_loss2 / (idx + 1))) \
-                            + ' kl_loss=%.4f' % (reduce_kl_loss.item())
+                            + ' kl_loss=%.4f' % (reduce_kl_loss.item()) \
+                            + ' middle_loss=%.4f' % (reduce_middle_loss.item())
             else:
                 sum_loss += loss
                 sum_loss2 += reduce_loss2
@@ -422,7 +435,7 @@ with Engine(custom_parser=parser) as engine:
                     config.link_val_log_file = tb_dir + '/val_last.log'
                     config.checkpoint_dir = tb_dir + '/checkpoint'
                     rgb_mIoU = segmentor.run(config.checkpoint_dir, str(epoch), config.val_log_file,
-                                         config.link_val_log_file, model, "rgbd")
+                                         config.link_val_log_file, model2, "rgb")
                     # depth_mIoU = 0.0
                     # depth_mIoU = segmentor.run(config.checkpoint_dir, str(epoch), config.val_log_file,
                     #                      config.link_val_log_file, model2, "depth")
