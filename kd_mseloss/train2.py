@@ -282,9 +282,9 @@ with Engine(custom_parser=parser) as engine:
     print("distillation_beta:", args.distillation_beta)
 
     for epoch in range(engine.state.epoch, config.nepochs + 1):
-        if epoch == 400: 
-            print("Training terminated at epoch 400")
-            break
+        # if epoch == 400: 
+        #     print("Training terminated at epoch 400")
+        #     break
         model.train()
         # model2.train()
         model2.eval()
