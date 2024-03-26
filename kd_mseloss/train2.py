@@ -438,7 +438,7 @@ with Engine(custom_parser=parser) as engine:
                     config.link_val_log_file = tb_dir + '/val_last.log'
                     config.checkpoint_dir = tb_dir + '/checkpoint'
                     rgb_mIoU = segmentor.run(config.checkpoint_dir, str(epoch), config.val_log_file,
-                                         config.link_val_log_file, model2, "rgb")
+                                         config.link_val_log_file, model, "rgbd")
                     # depth_mIoU = 0.0
                     # depth_mIoU = segmentor.run(config.checkpoint_dir, str(epoch), config.val_log_file,
                     #                      config.link_val_log_file, model2, "depth")
